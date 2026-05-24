@@ -219,7 +219,8 @@
 <script>
   let currentStep  = null;
   let waiting      = false;
-  let currentAudio = null;
+  let audioCtx     = null;   // Web Audio API context — created on first user gesture
+  let currentNode  = null;   // currently-playing BufferSourceNode
   let sttWs        = null;
   let vad          = null;
   let micActive    = false;
@@ -336,6 +337,8 @@
     startBtn.disabled = true;
     startBtn.textContent = 'Connecting…';
     emptyState.remove();
+    // Create AudioContext inside click handler so it's always unlocked
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
     const res  = await fetch('/api/start', { method: 'POST' });
     const data = await res.json();
@@ -394,14 +397,14 @@
     }
   }
 
-  // ── TTS ───────────────────────────────────────────────────────────────────
+  // ── TTS (Web Audio API — stays unlocked after user gesture) ─────────────
   async function speak(text, avatarEl) {
+    if (!audioCtx) return;
     // Stop anything currently playing
-    if (currentAudio) {
-      currentAudio.pause();
-      currentAudio = null;
+    if (currentNode) {
+      try { currentNode.stop(); } catch (_) {}
+      currentNode = null;
     }
-
     try {
       const res = await fetch('/api/tts', {
         method:  'POST',
@@ -410,34 +413,33 @@
       });
       if (!res.ok) return;
 
-      const blob = await res.blob();
-      const url  = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      currentAudio = audio;
+      const arrayBuffer = await res.arrayBuffer();
+      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+      const source = audioCtx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioCtx.destination);
+      currentNode = source;
 
       if (avatarEl) avatarEl.classList.add('speaking');
-
-      audio.onended = () => {
-        URL.revokeObjectURL(url);
+      source.onended = () => {
         if (avatarEl) avatarEl.classList.remove('speaking');
-        currentAudio = null;
+        currentNode = null;
       };
-      audio.onerror = () => {
-        if (avatarEl) avatarEl.classList.remove('speaking');
-        currentAudio = null;
-      };
-
-      audio.play();
-    } catch (_) { /* silently ignore TTS errors */ }
+      source.start(0);
+    } catch (e) {
+      console.error('[TTS]', e);
+      if (avatarEl) avatarEl.classList.remove('speaking');
+    }
   }
 
   function endCall() {
     statusDot.classList.remove('active');
     banner.style.display = 'block';
     setInputEnabled(false);
-    if (vad)    { try { vad.pause(); } catch (_) {} }
-    if (sttWs)  { try { sttWs.close(); } catch (_) {} }
-    if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+    if (currentNode) { try { currentNode.stop(); } catch (_) {} currentNode = null; }
+    if (vad)   { try { vad.pause(); } catch (_) {} }
+    if (sttWs) { try { sttWs.close(); } catch (_) {} }
   }
 
   function setInputEnabled(on) {
