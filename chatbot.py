@@ -122,6 +122,63 @@ def parse_input(user_input: str, expected_intents: list[str]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Crisis detection and response
+# ---------------------------------------------------------------------------
+_CRISIS_KEYWORDS = frozenset([
+    # Suicide / self-harm
+    "suicide", "suicidal", "kill myself", "end my life", "take my life",
+    "want to die", "don't want to live", "no reason to live",
+    "hurt myself", "harm myself", "self-harm", "self harm",
+    "cut myself", "hang myself", "overdose", "shoot myself",
+    "jump off", "drive into a wall", "drive into a tree",
+    "drive off a bridge", "crash my car", "crash into a wall",
+    # Violence toward others
+    "kill someone", "kill people", "hurt someone", "harm someone",
+    "shoot someone", "attack someone", "stab someone",
+])
+
+# Words that warrant an LLM safety check even if no definitive keyword matched
+_DISTRESS_SIGNALS = frozenset([
+    "drive", "crash", "wall", "bridge", "cliff", "jump",
+    "die", "dead", "death", "kill", "harm", "hurt", "weapon",
+    "gun", "knife", "shoot", "attack", "hopeless", "worthless",
+    "trapped", "desperate", "can't go on", "no point",
+])
+
+_CRISIS_RESPONSE = (
+    "I'm concerned about what you've shared and I want to make sure you get the right support. "
+    "Please reach out to a crisis service right away: "
+    "Call or text 988 for the Suicide & Crisis Lifeline, available 24/7. "
+    "You can also text HOME to 741741 to reach the Crisis Text Line. "
+    "For domestic violence support, call 1-800-799-7233. "
+    "If you or someone else is in immediate danger, please call 911. "
+    "Please take care of yourself — help is available."
+)
+
+
+def _is_crisis(user_input: str) -> bool:
+    """Return True if the input signals suicidal ideation, self-harm, or intent to harm others."""
+    lo = user_input.lower()
+    # Fast definitive match
+    if any(k in lo for k in _CRISIS_KEYWORDS):
+        return True
+    # Only run LLM check when distress signals are present
+    if not any(w in lo for w in _DISTRESS_SIGNALS):
+        return False
+    prompt = (
+        'Does the following statement express intent to harm oneself or others, '
+        'suicidal ideation, or a mental health crisis? Reply with only "yes" or "no".\n\n'
+        f'Statement: "{user_input}"'
+    )
+    resp = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=5,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return resp.content[0].text.strip().lower().startswith("yes")
+
+
+# ---------------------------------------------------------------------------
 # Question detection and answering
 # ---------------------------------------------------------------------------
 _QUESTION_STARTERS = {
@@ -202,6 +259,10 @@ class AnthemChatbot:
         )
 
     def respond(self, user_input: str) -> str:
+        # Safety: intercept crisis signals before anything else
+        if _is_crisis(user_input):
+            return _CRISIS_RESPONSE
+
         # Answer any question at any step, then re-ask current prompt
         answer = _answer_question(user_input)
         if answer:
