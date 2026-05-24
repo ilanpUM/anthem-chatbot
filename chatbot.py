@@ -122,6 +122,28 @@ def parse_input(user_input: str, expected_intents: list[str]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Patient-info question handler (keyword-based, no LLM needed)
+# ---------------------------------------------------------------------------
+def _answer_patient_question(user_input: str) -> str | None:
+    """Return an answer if the caller is asking about patient/auth data; else None."""
+    lo = user_input.lower()
+    m  = MEMBER_DATA
+    if any(k in lo for k in ("date of birth", "dob", "birthday", "born", "birth date")):
+        return f"The patient's date of birth is {m['dob']}."
+    if any(k in lo for k in ("member id", "member number", "membership id", "member #")):
+        return f"The member ID is {m['member_id']}."
+    if any(k in lo for k in ("auth number", "authorization number", "auth #", "auth num")):
+        return f"The authorization number is {m['auth_number']}."
+    if any(k in lo for k in ("cpt code", "cpt", "procedure code")):
+        return f"The CPT code is {m['cpt_code']}."
+    if any(k in lo for k in ("length of stay", "stay dates", "start date", "end date", "dates")):
+        return f"The length of stay is from {m['stay_from']} to {m['stay_to']}."
+    if any(k in lo for k in ("patient name", "member name", "name")):
+        return f"The patient's name is {m['first_name']} {m['last_name']}."
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Deterministic conversation state machine
 # ---------------------------------------------------------------------------
 class Step(Enum):
@@ -225,6 +247,9 @@ class AnthemChatbot:
         return "I'm unable to proceed further as the memberID verification has failed. Thank you"
 
     def _s6(self, user_input: str) -> str:
+        answer = _answer_patient_question(user_input)
+        if answer:
+            return f"{answer} Let me know when you are ready and I'll share the authorization details."
         r = parse_input(user_input, ["ready"])
         if r["intent"] == "ready":
             self.step = Step.S7
@@ -237,6 +262,9 @@ class AnthemChatbot:
         return "I'll wait until you're ready. Please say 'Ready' when you'd like me to continue."
 
     def _s7(self, user_input: str) -> str:
+        answer = _answer_patient_question(user_input)
+        if answer:
+            return f"{answer} Do you want me to repeat the authorization details?"
         r = parse_input(user_input, ["repeat", "no_repeat"])
         if r["intent"] == "no_repeat":
             self.step = Step.S8
