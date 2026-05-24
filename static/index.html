@@ -236,7 +236,7 @@
          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage();}" />
 
   <!-- Mic button -->
-  <button id="mic-btn" onclick="toggleMic()" disabled title="Hold to speak">
+  <button id="mic-btn" onclick="toggleMic()" disabled title="Mute microphone">
     <!-- mic icon -->
     <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
       <path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v6a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm-7 8a1 1 0 0 1 1 1 6 6 0 0 0 12 0 1 1 0 0 1 2 0 8 8 0 0 1-7 7.938V21h2a1 1 0 0 1 0 2H9a1 1 0 0 1 0-2h2v-2.062A8 8 0 0 1 4 12a1 1 0 0 1 1-1z"/>
@@ -313,14 +313,16 @@
       negativeSpeechThreshold: 0.35,
 
       onSpeechStart() {
-        micBtn.classList.add('listening');
-        input.value       = '';
-        input.placeholder = 'Listening…';
+        if (micActive) {
+          micBtn.classList.add('listening');
+          input.value       = '';
+          input.placeholder = 'Listening…';
+        }
       },
 
       onFrameProcessed(frame, isSpeech) {
         // Only stream frames where Silero detects speech (VAD gating)
-        if (isSpeech && sttWs && sttWs.readyState === WebSocket.OPEN) {
+        if (isSpeech && micActive && sttWs && sttWs.readyState === WebSocket.OPEN) {
           const int16 = new Int16Array(frame.length);
           for (let i = 0; i < frame.length; i++) {
             const s = Math.max(-1, Math.min(1, frame[i]));
@@ -335,18 +337,26 @@
         input.placeholder = 'Type your response…';
       },
     });
+
+    // Auto-start VAD — no button press needed
+    vad.start();
+    micActive = true;
+    micBtn.disabled = false;
+    micBtn.title = 'Mute microphone';
   }
 
-  // Mic button: toggle VAD on/off
+  // Mic button: mute / unmute (VAD is always auto-started)
   function toggleMic() {
-    if (!vad) { appendBubble('agent', '⚠️ Voice input not ready yet.'); return; }
+    if (!vad) return;
     if (micActive) {
       vad.pause();
       micActive = false;
       micBtn.classList.remove('listening');
+      micBtn.title = 'Unmute microphone';
     } else {
       vad.start();
       micActive = true;
+      micBtn.title = 'Mute microphone';
     }
   }
 
@@ -454,6 +464,7 @@
     statusDot.classList.remove('active');
     banner.style.display = 'block';
     setInputEnabled(false);
+    micBtn.disabled = true;
     if (vad)    { try { vad.pause(); } catch (_) {} }
     if (sttWs)  { try { sttWs.close(); } catch (_) {} }
     if (currentAudio) { currentAudio.pause(); currentAudio = null; }
@@ -462,7 +473,6 @@
   function setInputEnabled(on) {
     input.disabled   = !on;
     sendBtn.disabled = !on;
-    micBtn.disabled  = !on;
     if (on) input.focus();
   }
 
