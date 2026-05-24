@@ -153,28 +153,6 @@
     #msg-input:focus  { border-color: #003087; }
     #msg-input:disabled { background: #f9fafb; color: #9ca3af; }
 
-    /* ── Mic button ── */
-    #mic-btn {
-      width: 42px; height: 42px;
-      border: none; border-radius: 10px;
-      background: #f3f4f6; color: #374151;
-      display: flex; align-items: center; justify-content: center;
-      cursor: pointer; flex-shrink: 0;
-      transition: background .2s, color .2s;
-      position: relative;
-    }
-    #mic-btn:disabled { opacity: .4; cursor: default; }
-    #mic-btn:hover:not(:disabled) { background: #e5e7eb; }
-    #mic-btn.listening {
-      background: #fee2e2; color: #dc2626;
-      animation: micPulse 1.2s ease-in-out infinite;
-    }
-    @keyframes micPulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(220,38,38,.4); }
-      50%       { box-shadow: 0 0 0 8px rgba(220,38,38,0); }
-    }
-    #mic-btn svg { width: 18px; height: 18px; }
-
     /* ── Send button ── */
     #send-btn {
       background: #003087; color: #fff;
@@ -186,14 +164,6 @@
     #send-btn:hover:not(:disabled) { background: #00256b; }
     #send-btn:disabled { background: #9ca3af; cursor: default; }
     #send-btn svg { width: 18px; height: 18px; fill: #fff; }
-
-    /* ── Voice status label ── */
-    #voice-status {
-      font-size: 11px; color: #dc2626; font-weight: 500;
-      position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%);
-      white-space: nowrap; display: none;
-    }
-    #mic-btn.listening #voice-status { display: block; }
 
     /* ── Speaking indicator on agent avatar ── */
     .avatar.speaking {
@@ -235,15 +205,6 @@
   <input id="msg-input" type="text" placeholder="Type your response…" disabled
          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage();}" />
 
-  <!-- Mic button -->
-  <button id="mic-btn" onclick="toggleMic()" disabled title="Mute microphone">
-    <!-- mic icon -->
-    <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-      <path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v6a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm-7 8a1 1 0 0 1 1 1 6 6 0 0 0 12 0 1 1 0 0 1 2 0 8 8 0 0 1-7 7.938V21h2a1 1 0 0 1 0 2H9a1 1 0 0 1 0-2h2v-2.062A8 8 0 0 1 4 12a1 1 0 0 1 1-1z"/>
-    </svg>
-    <span id="voice-status">Listening…</span>
-  </button>
-
   <button id="send-btn" onclick="sendMessage()" disabled>
     <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
       <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
@@ -252,17 +213,16 @@
 </div>
 
 <script>
-  let currentStep  = null;   // step name string ("S1", "S2", …) — owns conversation state
+  let currentStep  = null;
   let waiting      = false;
-  let currentAudio = null;   // tracks the active Audio object so we can stop it
-  let sttWs        = null;   // WebSocket to /ws/stt
-  let vad          = null;   // MicVAD instance
-  let micActive    = false;  // whether VAD is running
+  let currentAudio = null;
+  let sttWs        = null;
+  let vad          = null;
+  let micActive    = false;
 
   const chat      = document.getElementById('chat');
   const input     = document.getElementById('msg-input');
   const sendBtn   = document.getElementById('send-btn');
-  const micBtn    = document.getElementById('mic-btn');
   const startBtn  = document.getElementById('start-btn');
   const statusDot = document.getElementById('status-dot');
   const banner    = document.getElementById('ended-banner');
@@ -313,11 +273,8 @@
       negativeSpeechThreshold: 0.35,
 
       onSpeechStart() {
-        if (micActive) {
-          micBtn.classList.add('listening');
-          input.value       = '';
-          input.placeholder = 'Listening…';
-        }
+        input.value       = '';
+        input.placeholder = 'Listening…';
       },
 
       onFrameProcessed(frame, isSpeech) {
@@ -333,31 +290,13 @@
       },
 
       onSpeechEnd() {
-        micBtn.classList.remove('listening');
         input.placeholder = 'Type your response…';
       },
     });
 
-    // Auto-start VAD — no button press needed
+    // Auto-start VAD — listens continuously
     vad.start();
     micActive = true;
-    micBtn.disabled = false;
-    micBtn.title = 'Mute microphone';
-  }
-
-  // Mic button: mute / unmute (VAD is always auto-started)
-  function toggleMic() {
-    if (!vad) return;
-    if (micActive) {
-      vad.pause();
-      micActive = false;
-      micBtn.classList.remove('listening');
-      micBtn.title = 'Unmute microphone';
-    } else {
-      vad.start();
-      micActive = true;
-      micBtn.title = 'Mute microphone';
-    }
   }
 
   // ── Call flow ─────────────────────────────────────────────────────────────
@@ -464,7 +403,6 @@
     statusDot.classList.remove('active');
     banner.style.display = 'block';
     setInputEnabled(false);
-    micBtn.disabled = true;
     if (vad)    { try { vad.pause(); } catch (_) {} }
     if (sttWs)  { try { sttWs.close(); } catch (_) {} }
     if (currentAudio) { currentAudio.pause(); currentAudio = null; }

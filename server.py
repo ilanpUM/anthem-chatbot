@@ -78,7 +78,7 @@ async def tts(request: Request):
 # STT WebSocket  (Silero VAD gated PCM → Deepgram + AssemblyAI fan-out)
 # ---------------------------------------------------------------------------
 AAI_WS_URL = (
-    "wss://api.assemblyai.com/v3/ws"
+    "wss://streaming.assemblyai.com/v3/ws"
     "?sample_rate=16000"
     "&encoding=pcm_s16le"
     "&end_utterance_silence_threshold=700"
@@ -126,44 +126,49 @@ async def stt_ws(websocket: WebSocket):
 
             # ── Deepgram → interim / final transcripts ──────────────────
             async def recv_deepgram():
-                async for msg in dg_socket:
-                    if not isinstance(msg, ListenV1Results):
-                        continue
-                    alt = msg.channel.alternatives[0]
-                    if not alt.transcript:
-                        continue
-                    event = "final" if msg.is_final else "interim"
-                    try:
-                        await websocket.send_json({"type": event, "text": alt.transcript})
-                    except Exception:
-                        return
+                try:
+                    async for msg in dg_socket:
+                        if not isinstance(msg, ListenV1Results):
+                            continue
+                        alt = msg.channel.alternatives[0]
+                        if not alt.transcript:
+                            continue
+                        event = "final" if msg.is_final else "interim"
+                        try:
+                            await websocket.send_json({"type": event, "text": alt.transcript})
+                        except Exception:
+                            return
+                except Exception:
+                    pass
 
             # ── AssemblyAI → semantic utterance end ─────────────────────
             async def recv_assemblyai():
-                async for raw in aai_socket:
-                    try:
-                        msg = json.loads(raw)
-                    except Exception:
-                        continue
-                    if msg.get("message_type") == "FinalTranscript" and msg.get("text"):
+                try:
+                    async for raw in aai_socket:
                         try:
-                            await websocket.send_json(
-                                {"type": "utterance_end", "text": msg["text"]}
-                            )
+                            msg = json.loads(raw)
                         except Exception:
-                            return
+                            continue
+                        if msg.get("message_type") == "FinalTranscript" and msg.get("text"):
+                            try:
+                                await websocket.send_json(
+                                    {"type": "utterance_end", "text": msg["text"]}
+                                )
+                            except Exception:
+                                return
+                except Exception:
+                    pass
 
-            tasks = [
-                asyncio.create_task(forward_audio()),
-                asyncio.create_task(recv_deepgram()),
-                asyncio.create_task(recv_assemblyai()),
-            ]
+            # forward_audio drives the lifecycle — recv tasks run until cancelled
+            fwd = asyncio.create_task(forward_audio())
+            dg_recv  = asyncio.create_task(recv_deepgram())
+            aai_recv = asyncio.create_task(recv_assemblyai())
             try:
-                await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                await fwd
             finally:
-                for t in tasks:
-                    t.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
+                dg_recv.cancel()
+                aai_recv.cancel()
+                await asyncio.gather(dg_recv, aai_recv, return_exceptions=True)
 
 
 # ---------------------------------------------------------------------------
