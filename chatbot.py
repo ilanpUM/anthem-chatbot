@@ -180,6 +180,12 @@ class AnthemChatbot:
         )
 
     def respond(self, user_input: str) -> str:
+        # Answer patient-info questions at any step, then re-ask current prompt
+        answer = _answer_patient_question(user_input)
+        if answer:
+            reprompt = self._reprompt()
+            return f"{answer} {reprompt}".strip()
+
         dispatch = {
             Step.S1:  self._s1,
             Step.S2:  self._s2,
@@ -193,6 +199,21 @@ class AnthemChatbot:
             Step.S10: self._farewell,
         }
         return dispatch[self.step](user_input)
+
+    def _reprompt(self) -> str:
+        """Return the current step's question so conversation continues after a side-question."""
+        m = MEMBER_DATA
+        name = f'{m["first_name"]} {m["last_name"]}'
+        prompts = {
+            Step.S1:  f'Am I speaking with {m["facility"]}?',
+            Step.S2:  f"Is {name} one of your current patients?",
+            Step.S3:  f"Please clearly state the member ID for {name}.",
+            Step.S4:  f"Please state slowly the member ID for {name}.",
+            Step.S5:  f"Please state the member ID for {name}.",
+            Step.S6:  "Let me know when you are ready and I'll share the authorization details.",
+            Step.S7:  "Do you want me to repeat any of the authorization details?",
+        }
+        return prompts.get(self.step, "")
 
     # ------------------------------------------------------------------
     # Step handlers
@@ -247,9 +268,6 @@ class AnthemChatbot:
         return "I'm unable to proceed further as the memberID verification has failed. Thank you"
 
     def _s6(self, user_input: str) -> str:
-        answer = _answer_patient_question(user_input)
-        if answer:
-            return f"{answer} Let me know when you are ready and I'll share the authorization details."
         r = parse_input(user_input, ["ready"])
         if r["intent"] == "ready":
             self.step = Step.S7
@@ -262,9 +280,6 @@ class AnthemChatbot:
         return "I'll wait until you're ready. Please say 'Ready' when you'd like me to continue."
 
     def _s7(self, user_input: str) -> str:
-        answer = _answer_patient_question(user_input)
-        if answer:
-            return f"{answer} Do you want me to repeat the authorization details?"
         r = parse_input(user_input, ["repeat", "no_repeat"])
         if r["intent"] == "no_repeat":
             self.step = Step.S8
