@@ -254,9 +254,10 @@
 <script>
   let currentStep  = null;   // step name string ("S1", "S2", …) — owns conversation state
   let waiting      = false;
-  let recognition  = null;
-  let micListening = false;
   let currentAudio = null;   // tracks the active Audio object so we can stop it
+  let sttWs        = null;   // WebSocket to /ws/stt
+  let vad          = null;   // MicVAD instance
+  let micActive    = false;  // whether VAD is running
 
   const chat      = document.getElementById('chat');
   const input     = document.getElementById('msg-input');
@@ -267,62 +268,86 @@
   const banner    = document.getElementById('ended-banner');
   const emptyState= document.getElementById('empty-state');
 
-  // ── Speech Recognition setup ──────────────────────────────────────────────
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  // ── STT: Silero VAD → Deepgram streaming → AssemblyAI semantic endpointing ──
 
-  if (SpeechRecognition) {
-    recognition = new SpeechRecognition();
-    recognition.lang = 'en-US';
-    recognition.continuous = false;
-    recognition.interimResults = true;
+  // Called once after startCall() — opens the WebSocket and loads Silero VAD
+  async function initSTT() {
+    // Open persistent WebSocket to server fan-out endpoint
+    sttWs = new WebSocket(`ws://${location.host}/ws/stt`);
+    sttWs.binaryType = 'arraybuffer';
 
-    recognition.onstart = () => {
-      micListening = true;
-      micBtn.classList.add('listening');
-      input.placeholder = 'Listening…';
+    sttWs.onmessage = ({ data }) => {
+      try {
+        const msg = JSON.parse(data);
+        if ((msg.type === 'interim' || msg.type === 'final') && msg.text) {
+          input.value = msg.text;           // live transcript display
+        }
+        if (msg.type === 'utterance_end' && msg.text && msg.text.trim()) {
+          input.value = msg.text;
+          if (!waiting) sendMessage();      // AssemblyAI says utterance is complete
+        }
+      } catch (_) {}
     };
 
-    recognition.onresult = (e) => {
-      const transcript = Array.from(e.results)
-        .map(r => r[0].transcript)
-        .join('');
-      input.value = transcript;
-      // Auto-send when the result is final
-      if (e.results[e.results.length - 1].isFinal) {
-        stopMic();
-        sendMessage();
-      }
-    };
+    sttWs.onerror = () => appendBubble('agent', '⚠️ STT connection error.');
 
-    recognition.onerror = (e) => {
-      stopMic();
-      if (e.error !== 'no-speech' && e.error !== 'aborted') {
-        appendBubble('agent', `⚠️ Microphone error: ${e.error}`);
-      }
-    };
-
-    recognition.onend = () => {
-      stopMic();
-    };
-  }
-
-  function toggleMic() {
-    if (!recognition) {
-      appendBubble('agent', '⚠️ Your browser does not support voice input. Please use Chrome or Edge.');
+    // Load Silero VAD (ES module served locally)
+    let MicVAD;
+    try {
+      ({ MicVAD } = await import('/static/vad/bundle.min.js'));
+    } catch (e) {
+      appendBubble('agent', '⚠️ Could not load voice detection module.');
       return;
     }
-    if (micListening) {
-      recognition.stop();
-    } else {
-      input.value = '';
-      recognition.start();
-    }
+
+    vad = await MicVAD.new({
+      // Serve worklet and model from local static folder
+      workletURL: '/static/vad/vad.worklet.bundle.min.js',
+      modelURL:   '/static/vad/silero_vad.onnx',
+      // Point ONNX Runtime WASM to CDN (files are too large to bundle)
+      ortConfig(ort) {
+        ort.env.wasm.wasmPaths =
+          'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/';
+      },
+      positiveSpeechThreshold: 0.5,
+      negativeSpeechThreshold: 0.35,
+
+      onSpeechStart() {
+        micBtn.classList.add('listening');
+        input.value       = '';
+        input.placeholder = 'Listening…';
+      },
+
+      onFrameProcessed(frame, isSpeech) {
+        // Only stream frames where Silero detects speech (VAD gating)
+        if (isSpeech && sttWs && sttWs.readyState === WebSocket.OPEN) {
+          const int16 = new Int16Array(frame.length);
+          for (let i = 0; i < frame.length; i++) {
+            const s = Math.max(-1, Math.min(1, frame[i]));
+            int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+          }
+          sttWs.send(int16.buffer);
+        }
+      },
+
+      onSpeechEnd() {
+        micBtn.classList.remove('listening');
+        input.placeholder = 'Type your response…';
+      },
+    });
   }
 
-  function stopMic() {
-    micListening = false;
-    micBtn.classList.remove('listening');
-    input.placeholder = 'Type your response…';
+  // Mic button: toggle VAD on/off
+  function toggleMic() {
+    if (!vad) { appendBubble('agent', '⚠️ Voice input not ready yet.'); return; }
+    if (micActive) {
+      vad.pause();
+      micActive = false;
+      micBtn.classList.remove('listening');
+    } else {
+      vad.start();
+      micActive = true;
+    }
   }
 
   // ── Call flow ─────────────────────────────────────────────────────────────
@@ -340,6 +365,7 @@
     setInputEnabled(true);
     startBtn.classList.add('hidden');
     speak(data.message, greetAv);
+    initSTT();  // open WebSocket + load Silero VAD in background
   }
 
   async function sendMessage() {
@@ -428,7 +454,8 @@
     statusDot.classList.remove('active');
     banner.style.display = 'block';
     setInputEnabled(false);
-    if (recognition && micListening) recognition.stop();
+    if (vad)    { try { vad.pause(); } catch (_) {} }
+    if (sttWs)  { try { sttWs.close(); } catch (_) {} }
     if (currentAudio) { currentAudio.pause(); currentAudio = null; }
   }
 

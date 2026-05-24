@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 .env
 .vercel
+static/vad/silero_vad.onnx
