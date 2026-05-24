@@ -3,3 +3,4 @@ __pycache__/
 .env
 .vercel
 static/vad/silero_vad.onnx
+static/vad/*.wasm

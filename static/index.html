@@ -187,6 +187,7 @@
     <h1>Anthem Blue Cross and Blue Shield</h1>
     <p>AI Virtual Assistant — Authorization Notification</p>
   </div>
+  <span id="voice-label" style="font-size:11px;opacity:.7;margin-left:auto;margin-right:6px;white-space:nowrap;"></span>
   <div class="status-dot" id="status-dot"></div>
 </header>
 
@@ -230,73 +231,92 @@
 
   // ── STT: Silero VAD → Deepgram streaming → AssemblyAI semantic endpointing ──
 
+  function setVoiceStatus(text, color) {
+    const dot = document.getElementById('status-dot');
+    const hdr = document.getElementById('voice-label');
+    if (hdr) hdr.textContent = text;
+    if (dot) dot.style.background = color || '';
+  }
+
   // Called once after startCall() — opens the WebSocket and loads Silero VAD
   async function initSTT() {
+    setVoiceStatus('Connecting mic…', '#f59e0b');
+
     // Open persistent WebSocket to server fan-out endpoint
     sttWs = new WebSocket(`ws://${location.host}/ws/stt`);
     sttWs.binaryType = 'arraybuffer';
+
+    sttWs.onopen  = () => console.log('[STT] WebSocket open');
+    sttWs.onerror = (e) => { console.error('[STT] WS error', e); appendBubble('agent', '⚠️ Voice connection error — please refresh.'); };
+    sttWs.onclose = (e) => console.warn('[STT] WS closed', e.code, e.reason);
 
     sttWs.onmessage = ({ data }) => {
       try {
         const msg = JSON.parse(data);
         if ((msg.type === 'interim' || msg.type === 'final') && msg.text) {
-          input.value = msg.text;           // live transcript display
+          input.value = msg.text;
         }
         if (msg.type === 'utterance_end' && msg.text && msg.text.trim()) {
           input.value = msg.text;
-          if (!waiting) sendMessage();      // AssemblyAI says utterance is complete
+          if (!waiting) sendMessage();
         }
       } catch (_) {}
     };
-
-    sttWs.onerror = () => appendBubble('agent', '⚠️ STT connection error.');
 
     // Load Silero VAD (ES module served locally)
     let MicVAD;
     try {
       ({ MicVAD } = await import('/static/vad/bundle.min.js'));
     } catch (e) {
-      appendBubble('agent', '⚠️ Could not load voice detection module.');
+      console.error('[VAD] import failed', e);
+      appendBubble('agent', '⚠️ Could not load voice module — please refresh.');
+      setVoiceStatus('Voice unavailable', '#ef4444');
       return;
     }
 
-    vad = await MicVAD.new({
-      // Serve worklet and model from local static folder
-      workletURL: '/static/vad/vad.worklet.bundle.min.js',
-      modelURL:   '/static/vad/silero_vad.onnx',
-      // Point ONNX Runtime WASM to CDN (files are too large to bundle)
-      ortConfig(ort) {
-        ort.env.wasm.wasmPaths =
-          'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/';
-      },
-      positiveSpeechThreshold: 0.5,
-      negativeSpeechThreshold: 0.35,
+    try {
+      vad = await MicVAD.new({
+        workletURL: '/static/vad/vad.worklet.bundle.min.js',
+        modelURL:   '/static/vad/silero_vad.onnx',
+        // Use locally-served WASM so we don't depend on CDN availability
+        ortConfig(ort) {
+          ort.env.wasm.wasmPaths = '/static/vad/';
+        },
+        positiveSpeechThreshold: 0.5,
+        negativeSpeechThreshold: 0.35,
 
-      onSpeechStart() {
-        input.value       = '';
-        input.placeholder = 'Listening…';
-      },
+        onSpeechStart() {
+          setVoiceStatus('Listening…', '#22c55e');
+          input.value       = '';
+          input.placeholder = 'Listening…';
+        },
 
-      onFrameProcessed(probs, frame) {
-        // probs = { isSpeech, notSpeech }; frame = Float32Array audio data
-        if (probs.isSpeech > 0.5 && micActive && sttWs && sttWs.readyState === WebSocket.OPEN) {
-          const int16 = new Int16Array(frame.length);
-          for (let i = 0; i < frame.length; i++) {
-            const s = Math.max(-1, Math.min(1, frame[i]));
-            int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        onFrameProcessed(probs, frame) {
+          if (probs.isSpeech > 0.5 && micActive && sttWs && sttWs.readyState === WebSocket.OPEN) {
+            const int16 = new Int16Array(frame.length);
+            for (let i = 0; i < frame.length; i++) {
+              const s = Math.max(-1, Math.min(1, frame[i]));
+              int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+            sttWs.send(int16.buffer);
           }
-          sttWs.send(int16.buffer);
-        }
-      },
+        },
 
-      onSpeechEnd() {
-        input.placeholder = 'Type your response…';
-      },
-    });
+        onSpeechEnd() {
+          setVoiceStatus('Mic active', '#22c55e');
+          input.placeholder = 'Type your response…';
+        },
+      });
+    } catch (e) {
+      console.error('[VAD] MicVAD.new() failed', e);
+      appendBubble('agent', `⚠️ Microphone error: ${e.message} — check browser mic permissions.`);
+      setVoiceStatus('Voice unavailable', '#ef4444');
+      return;
+    }
 
-    // Auto-start VAD — listens continuously
     vad.start();
     micActive = true;
+    setVoiceStatus('Mic active', '#22c55e');
   }
 
   // ── Call flow ─────────────────────────────────────────────────────────────
