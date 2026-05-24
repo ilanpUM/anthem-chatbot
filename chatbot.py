@@ -187,11 +187,34 @@ _QUESTION_STARTERS = {
     "can ", "could ", "would ", "will ", "should ",
 }
 
+# Request phrases that signal an information request even without a question mark
+_REQUEST_STARTERS = (
+    "repeat the", "tell me", "give me", "say again", "say the",
+    "confirm the", "provide the", "remind me", "read back",
+)
+
+# Known data fields — any mention triggers the question handler
+_DATA_FIELD_MENTIONS = (
+    "dob", "date of birth", "birth date", "birthday",
+    "member id", "member number", "membership",
+    "auth number", "authorization number",
+    "cpt code", "cpt", "procedure code",
+    "length of stay", "stay dates",
+    "patient name", "member name",
+)
+
+
 def _looks_like_question(text: str) -> bool:
     lo = text.lower().strip()
-    return lo.endswith("?") or any(
-        lo.startswith(w) for w in _QUESTION_STARTERS
-    )
+    if lo.endswith("?"):
+        return True
+    if any(lo.startswith(w) for w in _QUESTION_STARTERS):
+        return True
+    if any(lo.startswith(r) for r in _REQUEST_STARTERS):
+        return True
+    if any(field in lo for field in _DATA_FIELD_MENTIONS):
+        return True
+    return False
 
 
 def _answer_question(user_input: str) -> str | None:
