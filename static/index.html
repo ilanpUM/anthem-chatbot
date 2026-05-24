@@ -277,9 +277,9 @@
         input.placeholder = 'Listening…';
       },
 
-      onFrameProcessed(frame, isSpeech) {
-        // Only stream frames where Silero detects speech (VAD gating)
-        if (isSpeech && micActive && sttWs && sttWs.readyState === WebSocket.OPEN) {
+      onFrameProcessed(probs, frame) {
+        // probs = { isSpeech, notSpeech }; frame = Float32Array audio data
+        if (probs.isSpeech > 0.5 && micActive && sttWs && sttWs.readyState === WebSocket.OPEN) {
           const int16 = new Int16Array(frame.length);
           for (let i = 0; i < frame.length; i++) {
             const s = Math.max(-1, Math.min(1, frame[i]));
