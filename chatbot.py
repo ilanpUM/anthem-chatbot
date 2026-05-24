@@ -217,24 +217,38 @@ def _looks_like_question(text: str) -> bool:
     return False
 
 
-def _answer_question(user_input: str) -> str | None:
-    """Answer any question the caller asks. Returns None for non-questions."""
+def _answer_question(user_input: str, verified: bool = False) -> str | None:
+    """Answer any question the caller asks. Returns None for non-questions.
+
+    verified=True only after member ID has been confirmed (S6+); sensitive
+    authorization details are withheld until then.
+    """
     if not _looks_like_question(user_input):
         return None
     m = MEMBER_DATA
-    context = (
-        "You are an AI virtual assistant calling on behalf of Anthem Blue Cross and Blue Shield. "
-        f"You are calling {m['facility']} with an authorization update for patient "
-        f"{m['first_name']} {m['last_name']} (DOB {m['dob']}, member ID {m['member_id']}). "
-        f"The authorization number is {m['auth_number']}, CPT code {m['cpt_code']}, "
-        f"length of stay {m['stay_from']} to {m['stay_to']}."
-    )
+    if verified:
+        context = (
+            "You are an AI virtual assistant calling on behalf of Anthem Blue Cross and Blue Shield. "
+            f"You are calling {m['facility']} with an authorization update for patient "
+            f"{m['first_name']} {m['last_name']} (DOB {m['dob']}, member ID {m['member_id']}). "
+            f"The authorization number is {m['auth_number']}, CPT code {m['cpt_code']}, "
+            f"length of stay {m['stay_from']} to {m['stay_to']}."
+        )
+    else:
+        # Pre-verification: do NOT expose auth number, CPT, stay dates, or member ID
+        context = (
+            "You are an AI virtual assistant calling on behalf of Anthem Blue Cross and Blue Shield. "
+            f"You are calling {m['facility']} with an authorization update for patient "
+            f"{m['first_name']} {m['last_name']} (DOB {m['dob']}). "
+            "Authorization details such as the authorization number, CPT code, and stay dates "
+            "are confidential and can only be shared after the caller verifies the member ID."
+        )
     prompt = (
         f"{context}\n\n"
         f'The person you called asked: "{user_input}"\n\n'
         "Answer their question briefly and professionally in 1-2 sentences. "
-        "If it cannot be answered from the context above, say you can only assist with "
-        "this authorization notification. "
+        "If the question is about confidential authorization details not yet available, "
+        "politely say those details can only be shared after member ID verification. "
         "Reply with just the answer — no preamble, no JSON."
     )
     resp = client.messages.create(
@@ -287,7 +301,9 @@ class AnthemChatbot:
             return _CRISIS_RESPONSE
 
         # Answer any question at any step, then re-ask current prompt
-        answer = _answer_question(user_input)
+        # Only pass sensitive auth details after member ID is verified (S6+)
+        verified = self.step.value >= Step.S6.value
+        answer = _answer_question(user_input, verified=verified)
         if answer:
             reprompt = self._reprompt()
             return f"{answer} {reprompt}".strip()
