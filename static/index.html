@@ -195,6 +195,17 @@
     }
     #mic-btn.listening #voice-status { display: block; }
 
+    /* ── Speaking indicator on agent avatar ── */
+    .avatar.speaking {
+      background: #1d4ed8;
+      box-shadow: 0 0 0 3px rgba(29,78,216,.35);
+      animation: speakPulse 1s ease-in-out infinite;
+    }
+    @keyframes speakPulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(29,78,216,.4); }
+      50%       { box-shadow: 0 0 0 6px rgba(29,78,216,0); }
+    }
+
     .hidden { display: none !important; }
   </style>
 </head>
@@ -245,6 +256,7 @@
   let waiting      = false;
   let recognition  = null;
   let micListening = false;
+  let currentAudio = null;   // tracks the active Audio object so we can stop it
 
   const chat      = document.getElementById('chat');
   const input     = document.getElementById('msg-input');
@@ -324,9 +336,10 @@
     sessionId  = data.session_id;
 
     statusDot.classList.add('active');
-    appendBubble('agent', data.message);
+    const { row: greetRow, avatar: greetAv } = appendBubble('agent', data.message);
     setInputEnabled(true);
     startBtn.classList.add('hidden');
+    speak(data.message, greetAv);
   }
 
   async function sendMessage() {
@@ -349,10 +362,11 @@
       const data = await res.json();
       typingRow.remove();
 
+      let agentAv = null;
       if (data.error) {
         appendBubble('agent', '⚠️ ' + data.error);
       } else if (data.message) {
-        appendBubble('agent', data.message);
+        ({ avatar: agentAv } = appendBubble('agent', data.message));
       }
 
       if (data.ended) {
@@ -360,6 +374,8 @@
       } else {
         setInputEnabled(true);
       }
+
+      if (agentAv && data.message) speak(data.message, agentAv);
     } catch (err) {
       typingRow.remove();
       appendBubble('agent', '⚠️ Connection error. Please try again.');
@@ -369,11 +385,49 @@
     }
   }
 
+  // ── TTS ───────────────────────────────────────────────────────────────────
+  async function speak(text, avatarEl) {
+    // Stop anything currently playing
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio = null;
+    }
+
+    try {
+      const res = await fetch('/api/tts', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ text }),
+      });
+      if (!res.ok) return;
+
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      currentAudio = audio;
+
+      if (avatarEl) avatarEl.classList.add('speaking');
+
+      audio.onended = () => {
+        URL.revokeObjectURL(url);
+        if (avatarEl) avatarEl.classList.remove('speaking');
+        currentAudio = null;
+      };
+      audio.onerror = () => {
+        if (avatarEl) avatarEl.classList.remove('speaking');
+        currentAudio = null;
+      };
+
+      audio.play();
+    } catch (_) { /* silently ignore TTS errors */ }
+  }
+
   function endCall() {
     statusDot.classList.remove('active');
     banner.style.display = 'block';
     setInputEnabled(false);
     if (recognition && micListening) recognition.stop();
+    if (currentAudio) { currentAudio.pause(); currentAudio = null; }
   }
 
   function setInputEnabled(on) {
@@ -388,11 +442,12 @@
     const row = document.createElement('div');
     row.className = `msg-row ${who}`;
 
+    let avatar = null;
     if (who === 'agent') {
-      const av = document.createElement('div');
-      av.className = 'avatar';
-      av.textContent = 'AI';
-      row.appendChild(av);
+      avatar = document.createElement('div');
+      avatar.className = 'avatar';
+      avatar.textContent = 'AI';
+      row.appendChild(avatar);
     }
 
     const bubble = document.createElement('div');
@@ -402,7 +457,7 @@
 
     chat.appendChild(row);
     chat.scrollTop = chat.scrollHeight;
-    return row;
+    return { row, avatar };
   }
 
   function appendTyping() {
