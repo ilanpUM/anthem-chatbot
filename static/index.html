@@ -252,7 +252,7 @@
 </div>
 
 <script>
-  let sessionId    = null;
+  let currentStep  = null;   // step name string ("S1", "S2", …) — owns conversation state
   let waiting      = false;
   let recognition  = null;
   let micListening = false;
@@ -333,7 +333,7 @@
 
     const res  = await fetch('/api/start', { method: 'POST' });
     const data = await res.json();
-    sessionId  = data.session_id;
+    currentStep = data.step;
 
     statusDot.classList.add('active');
     const { row: greetRow, avatar: greetAv } = appendBubble('agent', data.message);
@@ -344,7 +344,7 @@
 
   async function sendMessage() {
     const text = input.value.trim();
-    if (!text || waiting || !sessionId) return;
+    if (!text || waiting || !currentStep) return;
 
     appendBubble('user', text);
     input.value = '';
@@ -357,10 +357,12 @@
       const res  = await fetch('/api/chat', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ session_id: sessionId, message: text }),
+        body:    JSON.stringify({ step: currentStep, message: text }),
       });
       const data = await res.json();
       typingRow.remove();
+
+      if (data.step) currentStep = data.step;
 
       let agentAv = null;
       if (data.error) {

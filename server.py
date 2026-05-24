@@ -1,18 +1,14 @@
 import os
 import secrets
-import uuid
 
 from flask import Flask, Response, jsonify, request
 
-from chatbot import AnthemChatbot  # also loads .env
+from chatbot import AnthemChatbot, Step  # also loads .env
 
 from elevenlabs.client import ElevenLabs
 
 app = Flask(__name__, static_folder="static")
 app.secret_key = secrets.token_hex(32)
-
-# In-memory store: session_id -> AnthemChatbot
-_sessions: dict[str, AnthemChatbot] = {}
 
 el_client = ElevenLabs(api_key=os.environ["ELEVENLABS_API_KEY"])
 # Matilda — Knowledgeable, Professional, middle-aged female
@@ -27,27 +23,32 @@ def index():
 
 @app.route("/api/start", methods=["POST"])
 def start():
-    session_id = str(uuid.uuid4())
+    """Return the greeting and initial step name — no server-side session needed."""
     bot = AnthemChatbot()
-    _sessions[session_id] = bot
-    return jsonify({"session_id": session_id, "message": bot.greeting(), "ended": False})
+    return jsonify({"step": bot.step.name, "message": bot.greeting(), "ended": False})
 
 
 @app.route("/api/chat", methods=["POST"])
 def chat():
-    data = request.get_json()
-    session_id = data.get("session_id", "")
+    """
+    Stateless: client sends the current step name with each message.
+    Server reconstructs the bot at that step, processes the input,
+    and returns the new step name so the client can track state.
+    """
+    data = request.get_json() or {}
+    step_name  = data.get("step", "S1")
     user_input = data.get("message", "").strip()
 
-    bot = _sessions.get(session_id)
-    if not bot:
-        return jsonify({"error": "Session not found. Please start a new call."}), 404
+    try:
+        current_step = Step[step_name]
+    except KeyError:
+        return jsonify({"error": f"Unknown step: {step_name}"}), 400
 
-    if bot.ended:
-        return jsonify({"message": "", "ended": True})
+    bot = AnthemChatbot()
+    bot.step = current_step
 
     reply = bot.respond(user_input)
-    return jsonify({"message": reply, "ended": bot.ended})
+    return jsonify({"step": bot.step.name, "message": reply, "ended": bot.ended})
 
 
 @app.route("/api/tts", methods=["POST"])
