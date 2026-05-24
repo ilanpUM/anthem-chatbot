@@ -246,10 +246,15 @@ def _answer_question(user_input: str, verified: bool = False) -> str | None:
     prompt = (
         f"{context}\n\n"
         f'The person you called asked: "{user_input}"\n\n'
-        "Answer their question briefly and professionally in 1-2 sentences. "
-        "If the question is about confidential authorization details not yet available, "
-        "politely say those details can only be shared after member ID verification. "
-        "Reply with just the answer — no preamble, no JSON."
+        "Reply in ONE short, warm, empathetic sentence. "
+        "Rules:\n"
+        "- Do NOT mention the authorization number, CPT code, stay dates, or member ID "
+        "unless the caller is specifically asking about one of those fields.\n"
+        "- If the question is outside the scope of this call, gently say so and suggest "
+        "the right resource (e.g. physician, pharmacist, 911).\n"
+        "- If confidential details were requested but verification is still pending, "
+        "say they'll be available after member ID verification.\n"
+        "- No preamble, no JSON — just the one sentence."
     )
     resp = client.messages.create(
         model="claude-haiku-4-5-20251001",
