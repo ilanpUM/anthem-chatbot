@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Anthem Blue Cross — AI Virtual Assistant</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f4f8;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      color: #1a202c;
+    }
+
+    /* ── Header ── */
+    header {
+      background: #003087;
+      color: #fff;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.25);
+      flex-shrink: 0;
+    }
+    header .logo {
+      width: 36px; height: 36px;
+      background: #fff;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: 14px; color: #003087; letter-spacing: -1px;
+    }
+    header h1 { font-size: 17px; font-weight: 600; }
+    header p  { font-size: 12px; opacity: .75; margin-top: 1px; }
+    .status-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: #9ca3af; margin-left: auto; flex-shrink: 0;
+      transition: background .3s;
+    }
+    .status-dot.active { background: #22c55e; }
+
+    /* ── Chat window ── */
+    #chat {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    /* ── Empty state ── */
+    #empty-state {
+      margin: auto;
+      text-align: center;
+      color: #6b7280;
+    }
+    #empty-state .icon {
+      font-size: 48px; margin-bottom: 12px;
+    }
+    #empty-state h2 { font-size: 18px; margin-bottom: 6px; color: #374151; }
+    #empty-state p  { font-size: 14px; line-height: 1.5; max-width: 320px; }
+
+    /* ── Message bubbles ── */
+    .msg-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+      animation: fadeUp .2s ease;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .msg-row.agent  { justify-content: flex-start; }
+    .msg-row.user   { justify-content: flex-end; }
+
+    .avatar {
+      width: 30px; height: 30px; border-radius: 50%;
+      background: #003087; color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700; flex-shrink: 0;
+    }
+
+    .bubble {
+      max-width: 72%;
+      padding: 10px 14px;
+      border-radius: 18px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .msg-row.agent .bubble {
+      background: #fff;
+      border-bottom-left-radius: 4px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.1);
+      color: #1a202c;
+    }
+    .msg-row.user .bubble {
+      background: #003087;
+      border-bottom-right-radius: 4px;
+      color: #fff;
+    }
+
+    /* ── Typing indicator ── */
+    .typing-dots { display: flex; gap: 4px; padding: 4px 0; }
+    .typing-dots span {
+      width: 7px; height: 7px; border-radius: 50%; background: #9ca3af;
+      animation: bounce 1.2s infinite;
+    }
+    .typing-dots span:nth-child(2) { animation-delay: .2s; }
+    .typing-dots span:nth-child(3) { animation-delay: .4s; }
+    @keyframes bounce {
+      0%, 80%, 100% { transform: translateY(0); }
+      40%           { transform: translateY(-6px); }
+    }
+
+    /* ── Ended banner ── */
+    #ended-banner {
+      display: none;
+      background: #dcfce7; border-top: 1px solid #86efac;
+      color: #166534; text-align: center;
+      padding: 10px; font-size: 13px; font-weight: 500;
+    }
+
+    /* ── Input bar ── */
+    #input-bar {
+      background: #fff;
+      border-top: 1px solid #e5e7eb;
+      padding: 12px 16px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    #start-btn {
+      background: #003087; color: #fff;
+      border: none; border-radius: 10px;
+      padding: 11px 22px; font-size: 14px; font-weight: 600;
+      cursor: pointer; transition: background .2s;
+      white-space: nowrap;
+    }
+    #start-btn:hover { background: #00256b; }
+
+    #msg-input {
+      flex: 1;
+      border: 1.5px solid #d1d5db; border-radius: 10px;
+      padding: 10px 14px; font-size: 14px;
+      outline: none; transition: border-color .2s;
+      resize: none; height: 42px;
+    }
+    #msg-input:focus { border-color: #003087; }
+    #msg-input:disabled { background: #f9fafb; color: #9ca3af; }
+
+    #send-btn {
+      background: #003087; color: #fff;
+      border: none; border-radius: 10px;
+      width: 42px; height: 42px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: background .2s; flex-shrink: 0;
+    }
+    #send-btn:hover:not(:disabled) { background: #00256b; }
+    #send-btn:disabled { background: #9ca3af; cursor: default; }
+    #send-btn svg { width: 18px; height: 18px; fill: #fff; }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">AB</div>
+  <div>
+    <h1>Anthem Blue Cross and Blue Shield</h1>
+    <p>AI Virtual Assistant — Authorization Notification</p>
+  </div>
+  <div class="status-dot" id="status-dot"></div>
+</header>
+
+<div id="chat">
+  <div id="empty-state">
+    <div class="icon">📞</div>
+    <h2>Ready to Connect</h2>
+    <p>Click <strong>Start Call</strong> to begin the authorization notification conversation.</p>
+  </div>
+</div>
+
+<div id="ended-banner">Call ended — conversation complete.</div>
+
+<div id="input-bar">
+  <button id="start-btn" onclick="startCall()">Start Call</button>
+  <input id="msg-input" type="text" placeholder="Type your response…" disabled
+         onkeydown="if(event.key==='Enter' && !event.shiftKey){ event.preventDefault(); sendMessage(); }" />
+  <button id="send-btn" onclick="sendMessage()" disabled>
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+    </svg>
+  </button>
+</div>
+
+<script>
+  let sessionId = null;
+  let waiting   = false;
+
+  const chat      = document.getElementById('chat');
+  const input     = document.getElementById('msg-input');
+  const sendBtn   = document.getElementById('send-btn');
+  const startBtn  = document.getElementById('start-btn');
+  const statusDot = document.getElementById('status-dot');
+  const banner    = document.getElementById('ended-banner');
+  const emptyState= document.getElementById('empty-state');
+
+  async function startCall() {
+    startBtn.disabled = true;
+    startBtn.textContent = 'Connecting…';
+    emptyState.remove();
+
+    const res  = await fetch('/api/start', { method: 'POST' });
+    const data = await res.json();
+    sessionId  = data.session_id;
+
+    statusDot.classList.add('active');
+    appendBubble('agent', data.message);
+    setInputEnabled(true);
+    startBtn.classList.add('hidden');
+  }
+
+  async function sendMessage() {
+    const text = input.value.trim();
+    if (!text || waiting || !sessionId) return;
+
+    appendBubble('user', text);
+    input.value = '';
+    setInputEnabled(false);
+
+    const typingRow = appendTyping();
+    waiting = true;
+
+    try {
+      const res  = await fetch('/api/chat', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ session_id: sessionId, message: text }),
+      });
+      const data = await res.json();
+      typingRow.remove();
+
+      if (data.error) {
+        appendBubble('agent', '⚠️ ' + data.error);
+      } else if (data.message) {
+        appendBubble('agent', data.message);
+      }
+
+      if (data.ended) {
+        endCall();
+      } else {
+        setInputEnabled(true);
+      }
+    } catch (err) {
+      typingRow.remove();
+      appendBubble('agent', '⚠️ Connection error. Please try again.');
+      setInputEnabled(true);
+    } finally {
+      waiting = false;
+    }
+  }
+
+  function endCall() {
+    statusDot.classList.remove('active');
+    banner.style.display = 'block';
+    setInputEnabled(false);
+  }
+
+  function setInputEnabled(on) {
+    input.disabled  = !on;
+    sendBtn.disabled = !on;
+    if (on) input.focus();
+  }
+
+  function appendBubble(who, text) {
+    const row = document.createElement('div');
+    row.className = `msg-row ${who}`;
+
+    if (who === 'agent') {
+      const av = document.createElement('div');
+      av.className = 'avatar';
+      av.textContent = 'AI';
+      row.appendChild(av);
+    }
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.textContent = text;
+    row.appendChild(bubble);
+
+    chat.appendChild(row);
+    chat.scrollTop = chat.scrollHeight;
+    return row;
+  }
+
+  function appendTyping() {
+    const row = document.createElement('div');
+    row.className = 'msg-row agent';
+
+    const av = document.createElement('div');
+    av.className = 'avatar';
+    av.textContent = 'AI';
+    row.appendChild(av);
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.innerHTML = '<div class="typing-dots"><span></span><span></span><span></span></div>';
+    row.appendChild(bubble);
+
+    chat.appendChild(row);
+    chat.scrollTop = chat.scrollHeight;
+    return row;
+  }
+</script>
+</body>
+</html>
