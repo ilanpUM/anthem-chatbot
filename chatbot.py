@@ -122,25 +122,47 @@ def parse_input(user_input: str, expected_intents: list[str]) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Patient-info question handler (keyword-based, no LLM needed)
+# Question detection and answering
 # ---------------------------------------------------------------------------
-def _answer_patient_question(user_input: str) -> str | None:
-    """Return an answer if the caller is asking about patient/auth data; else None."""
-    lo = user_input.lower()
-    m  = MEMBER_DATA
-    if any(k in lo for k in ("date of birth", "dob", "birthday", "born", "birth date")):
-        return f"The patient's date of birth is {m['dob']}."
-    if any(k in lo for k in ("member id", "member number", "membership id", "member #")):
-        return f"The member ID is {m['member_id']}."
-    if any(k in lo for k in ("auth number", "authorization number", "auth #", "auth num")):
-        return f"The authorization number is {m['auth_number']}."
-    if any(k in lo for k in ("cpt code", "cpt", "procedure code")):
-        return f"The CPT code is {m['cpt_code']}."
-    if any(k in lo for k in ("length of stay", "stay dates", "start date", "end date", "dates")):
-        return f"The length of stay is from {m['stay_from']} to {m['stay_to']}."
-    if any(k in lo for k in ("patient name", "member name", "name")):
-        return f"The patient's name is {m['first_name']} {m['last_name']}."
-    return None
+_QUESTION_STARTERS = {
+    "what", "where", "who", "why", "how", "which", "whose", "whom",
+    "when", "is ", "are ", "was ", "were ", "do ", "does ", "did ",
+    "can ", "could ", "would ", "will ", "should ",
+}
+
+def _looks_like_question(text: str) -> bool:
+    lo = text.lower().strip()
+    return lo.endswith("?") or any(
+        lo.startswith(w) for w in _QUESTION_STARTERS
+    )
+
+
+def _answer_question(user_input: str) -> str | None:
+    """Answer any question the caller asks. Returns None for non-questions."""
+    if not _looks_like_question(user_input):
+        return None
+    m = MEMBER_DATA
+    context = (
+        "You are an AI virtual assistant calling on behalf of Anthem Blue Cross and Blue Shield. "
+        f"You are calling {m['facility']} with an authorization update for patient "
+        f"{m['first_name']} {m['last_name']} (DOB {m['dob']}, member ID {m['member_id']}). "
+        f"The authorization number is {m['auth_number']}, CPT code {m['cpt_code']}, "
+        f"length of stay {m['stay_from']} to {m['stay_to']}."
+    )
+    prompt = (
+        f"{context}\n\n"
+        f'The person you called asked: "{user_input}"\n\n'
+        "Answer their question briefly and professionally in 1-2 sentences. "
+        "If it cannot be answered from the context above, say you can only assist with "
+        "this authorization notification. "
+        "Reply with just the answer — no preamble, no JSON."
+    )
+    resp = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=150,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return resp.content[0].text.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -180,8 +202,8 @@ class AnthemChatbot:
         )
 
     def respond(self, user_input: str) -> str:
-        # Answer patient-info questions at any step, then re-ask current prompt
-        answer = _answer_patient_question(user_input)
+        # Answer any question at any step, then re-ask current prompt
+        answer = _answer_question(user_input)
         if answer:
             reprompt = self._reprompt()
             return f"{answer} {reprompt}".strip()
