@@ -4,3 +4,4 @@ __pycache__/
 .vercel
 static/vad/silero_vad.onnx
 static/vad/*.wasm
+static/vad/ort.min.js
