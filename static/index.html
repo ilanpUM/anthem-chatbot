@@ -253,13 +253,25 @@
     sttWs.onerror = (e) => { console.error('[STT] WS error', e); appendBubble('agent', '⚠️ Voice connection error — please refresh.'); };
     sttWs.onclose = (e) => console.warn('[STT] WS closed', e.code, e.reason);
 
+    let finalTimer = null;
+
     sttWs.onmessage = ({ data }) => {
       try {
         const msg = JSON.parse(data);
-        if ((msg.type === 'interim' || msg.type === 'final') && msg.text) {
+        if (msg.type === 'interim' && msg.text) {
+          input.value = msg.text;           // live transcript
+        }
+        if (msg.type === 'final' && msg.text) {
           input.value = msg.text;
+          // Deepgram fires is_final after 300ms silence — debounce then send
+          clearTimeout(finalTimer);
+          finalTimer = setTimeout(() => {
+            if (input.value.trim() && !waiting) sendMessage();
+          }, 600);
         }
         if (msg.type === 'utterance_end' && msg.text && msg.text.trim()) {
+          // AssemblyAI semantic endpoint — send immediately if it arrives
+          clearTimeout(finalTimer);
           input.value = msg.text;
           if (!waiting) sendMessage();
         }
